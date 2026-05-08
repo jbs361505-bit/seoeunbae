@@ -1,0 +1,77 @@
+import streamlit as st
+import requests
+import pandas as pd
+
+# 페이지 설정
+st.set_page_config(page_title="대기오염정보 대시보드", page_icon="☁️", layout="wide")
+
+# API 설정 (본인의 일반 인증키(Decoding)를 입력하세요)
+API_KEY = "	
+d8bf840f62d64cd0f1a6b347a1eb8eed74daad35938e72617e19082f3278266b"
+URL = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty"
+
+@st.cache_data(ttl=3600) # 1시간 동안 데이터 캐싱
+def fetch_air_pollution_data(sido_name):
+    """공공데이터포털에서 대기오염 정보를 가져오는 함수"""
+    params = {
+        "serviceKey": API_KEY,
+        "returnType": "json",
+        "numOfRows": "100",  # 한 번에 가져올 데이터 수
+        "pageNo": "1",
+        "sidoName": sido_name,
+        "ver": "1.0"
+    }
+    
+    try:
+        response = requests.get(URL, params=params)
+        response.raise_for_status() # HTTP 에러 발생 시 예외 처리
+        data = response.json()
+        
+        # API 응답에서 실제 데이터 항목(items) 추출
+        items = data.get('response', {}).get('body', {}).get('items', [])
+        return pd.DataFrame(items)
+        
+    except Exception as e:
+        st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
+        return pd.DataFrame()
+
+# --- 대시보드 UI 구성 ---
+
+st.title("☁️ 실시간 대기오염정보 대시보드")
+st.markdown("공공데이터포털(에어코리아) API를 활용한 시도별 실시간 미세먼지 측정 정보입니다.")
+
+# 사이드바: 지역 선택
+st.sidebar.header("검색 설정")
+sido_list = ['서울', '부산', '대구', '인천', '광주', '대전', '울산', '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주', '세종']
+selected_sido = st.sidebar.selectbox("시도 이름을 선택하세요", sido_list)
+
+# 데이터 가져오기
+with st.spinner('데이터를 불러오는 중입니다...'):
+    df = fetch_air_pollution_data(selected_sido)
+
+if not df.empty:
+    st.subheader(f"📍 {selected_sido} 지역 측정소별 현황")
+    
+    # 필요한 컬럼만 추출 및 이름 변경
+    try:
+        display_df = df[['stationName', 'dataTime', 'pm10Value', 'pm25Value', 'o3Value', 'khaiValue']]
+        display_df.columns = ['측정소명', '측정일시', '미세먼지(PM10)', '초미세먼지(PM2.5)', '오존농도', '통합대기환경수치']
+        
+        # 결측치(-)를 0이나 빈 문자열로 처리 (선택사항)
+        display_df = display_df.replace('-', '데이터 없음')
+        
+        # 데이터프레임 출력
+        st.dataframe(display_df, use_container_width=True)
+        
+        # 주요 지표 강조 (첫 번째 측정소 기준 예시)
+        st.markdown("---")
+        st.subheader("💡 주요 지표 요약 (최상단 측정소 기준)")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("미세먼지 (PM10)", f"{display_df.iloc[0]['미세먼지(PM10)']} ㎍/㎥")
+        col2.metric("초미세먼지 (PM2.5)", f"{display_df.iloc[0]['초미세먼지(PM2.5)']} ㎍/㎥")
+        col3.metric("통합대기환경수치", display_df.iloc[0]['통합대기환경수치'])
+        
+    except KeyError:
+        st.error("API 응답 데이터의 형식이 예상과 다릅니다. API 키가 정상적으로 승인되었는지 확인해주세요.")
+else:
+    st.warning("조회된 데이터가 없습니다. API 키를 확인하시거나 잠시 후 다시 시도해주세요.")
